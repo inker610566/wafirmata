@@ -30,6 +30,7 @@
 #include <SPI.h>
 #include <MFRC522.h>
 #include <Joypad.h>
+#include <SoftwareSerial.h>
 
 #define I2C_WRITE                   B00000000
 #define I2C_READ                    B00001000
@@ -351,6 +352,46 @@ void reportDigitalCallback(byte port, int value)
   ============================================================================*/
 void setIRrecv(byte pin) {
   irrecv = new IRrecv(pin);
+}
+
+/*==============================================================================
+   SoftwareSerialForward
+  ============================================================================*/
+SoftwareSerial *ssfSerial;
+char ssfbuf[16];
+int ssfbuf_idx;
+
+void softwareSerialForward_Init() {
+  ssfSerial = new SoftwareSerial(11, 12);
+  ssfSerial->begin(9600);
+  ssfbuf_idx = 0;
+}
+
+void softwareSerialForward() {
+    if(ssfSerial->available()>0) {
+        char c = ssfbuf[ssfbuf_idx ++] = ssfSerial->read();
+        if(c == 0xa) {
+            Firmata.write(START_SYSEX);
+            // write special code for identify
+            Firmata.write(0x79);
+            Firmata.write(0x10);
+            for(int i = 0 ; i < ssfbuf_idx ; i ++)
+                Firmata.write(ssfbuf[i]);
+            Firmata.write(END_SYSEX);
+            ssfbuf_idx = 0;
+        }
+        else if(c == 0xd) {
+            ssfbuf_idx --;
+        }
+        else if(ssfbuf_idx >= 16) {
+            // inform overflow drop data
+            Firmata.write(START_SYSEX);
+            Firmata.write(0x78);
+            Firmata.write(0x10);
+            Firmata.write(END_SYSEX);
+            ssfbuf_idx = 0;
+        }
+    }
 }
 
 void irReceiver() {
@@ -801,6 +842,7 @@ void setup()
     ; // wait for serial port to connect. Only needed for ATmega32u4-based boards (Leonardo, etc).
   }
   systemResetCallback();  // reset to default config
+  softwareSerialForward_Init();
 }
 
 /*==============================================================================
@@ -819,6 +861,7 @@ void loop()
   }
 
   irReceiver();
+  softwareSerialForward();
 
   if (rfidEnable) {
     if (mfrc522->PICC_IsNewCardPresent() && mfrc522->PICC_ReadCardSerial()) {
